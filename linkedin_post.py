@@ -1,6 +1,7 @@
 import time
 import os
 import logging
+import traceback
 from pathlib import Path
 from dotenv import load_dotenv
 from selenium import webdriver
@@ -11,9 +12,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+
 class LinkedinLogin:
     def __init__(self, browser):
-        env_file = os.path.join(Path(__file__).parent.parent, ".env")
+        env_file = os.path.join(Path(__file__).parent, ".env")
         load_dotenv(env_file)
         self.browser = browser
         self.username = os.getenv("LINKEDIN_USERNAME")
@@ -36,8 +38,20 @@ class LinkedinLogin:
 
             logging.info("Successfully navigated to Notifications tab!")
 
+            # Locate the first notification and click it to open in a new tab
+            first_notification = WebDriverWait(self.browser, 20).until(
+                EC.presence_of_element_located((By.XPATH, "(//a[contains(@class, 'nt-card__headline')])[1]"))
+            )
+            notification_url = first_notification.get_attribute("href")
+            logging.info(f"First notification URL: {notification_url}")
+
+            # Open the URL in a new tab
+            self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
+            logging.info("Successfully opened the first notification in a new tab!")
+
         except Exception as e:
             logging.error(f"Error during login and navigation: {e}")
+            logging.error(traceback.format_exc())
             raise e
 
     def _perform_login(self):
@@ -61,9 +75,13 @@ class LinkedinLogin:
             logging.info("Login completed successfully.")
         except Exception as e:
             logging.error(f"Error during login: {e}")
+            logging.error(traceback.format_exc())
             raise e
 
+
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+
     # Initialize the Chrome driver
     service = Service(ChromeDriverManager().install())
     options = webdriver.ChromeOptions()
