@@ -21,7 +21,19 @@ class LinkedinLogin:
         self.username = os.getenv("LINKEDIN_USERNAME")
         self.password = os.getenv("LINKEDIN_PASSWORD")
         self.cookies_file = "linkedin_cookies.pkl"
+        self.comments_file = "comments.txt"
+        self.comments = self._load_comments()
         logging.info(f'Username: {self.username}')
+
+    def _load_comments(self):
+        try:
+            with open(self.comments_file, "r") as file:
+                comments = file.readlines()
+            return [comment.strip() for comment in comments]
+        except Exception as e:
+            logging.error(f"Error loading comments: {e}")
+            logging.error(traceback.format_exc())
+            return []
 
     def load_cookies(self):
         try:
@@ -72,37 +84,42 @@ class LinkedinLogin:
 
             logging.info("Successfully navigated to Notifications tab!")
 
-            # Locate the first notification and click it to open in a new tab
-            first_notification = WebDriverWait(self.browser, 20).until(
-                EC.presence_of_element_located((By.XPATH, "(//a[contains(@class, 'nt-card__headline')])[1]"))
-            )
-            notification_url = first_notification.get_attribute("href")
-            logging.info(f"First notification URL: {notification_url}")
+            # Process notifications
+            for i in range(10):  # Process up to 10 notifications
+                try:
+                    notification_xpath = f"(//a[contains(@class, 'nt-card__headline')])[{i+1}]"
+                    notification = WebDriverWait(self.browser, 20).until(
+                        EC.presence_of_element_located((By.XPATH, notification_xpath))
+                    )
+                    notification_url = notification.get_attribute("href")
+                    logging.info(f"Notification {i+1} URL: {notification_url}")
 
-            # Open the URL in a new tab
-            self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
-            logging.info("Successfully opened the first notification in a new tab!")
-            time.sleep(1.5)
+                    # Open the URL in a new tab
+                    self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
+                    logging.info(f"Successfully opened notification {i+1} in a new tab!")
+                    time.sleep(1.5)
 
-            # Switch to the new tab
-            self.browser.switch_to.window(self.browser.window_handles[1])
+                    # Switch to the new tab
+                    self.browser.switch_to.window(self.browser.window_handles[1])
 
-            # Like the post
-            self.like_post()
+                    # Like, comment, and repost
+                    self.like_post()
+                    self.comment_on_post()
+                    self.repost_comment()
 
-            # Comment on the post and click the post button
-            self.comment_on_post()
+                    # Close the current tab and switch back to the first tab
+                    self.browser.close()
+                    self.browser.switch_to.window(self.browser.window_handles[0])
+                    logging.info(f"Successfully processed notification {i+1} and switched back to the notifications tab!")
 
-            # Click the repost button
-            self.repost_comment()
-
-            # Wait for 2 seconds
-            time.sleep(2)
-
-            # Close the current tab and switch back to the first tab
-            self.browser.close()
-            self.browser.switch_to.window(self.browser.window_handles[0])
-            logging.info("Successfully switched back to the notifications tab!")
+                except Exception as e:
+                    logging.error(f"Error processing notification {i+1}: {e}")
+                    logging.error(traceback.format_exc())
+                    # Close the tab and continue with the next notification
+                    if len(self.browser.window_handles) > 1:
+                        self.browser.close()
+                        self.browser.switch_to.window(self.browser.window_handles[0])
+                    continue
 
         except Exception as e:
             logging.error(f"Error during login and navigation: {e}")
@@ -171,16 +188,20 @@ class LinkedinLogin:
             comment_input = WebDriverWait(self.browser, 20).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='textbox']"))
             )
-            comment_input.send_keys("#interested")
-            logging.info("Successfully entered the comment!")
+            if self.comments:
+                comment = self.comments.pop(0)  # Get the first comment from the list
+                comment_input.send_keys(comment)
+                logging.info(f"Successfully entered the comment: {comment}")
 
-            # Locate and click the Post button to submit the comment
-            post_button = WebDriverWait(self.browser, 20).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[@class='comments-comment-box__submit-button mt3 artdeco-button artdeco-button--1 artdeco-button--primary ember-view']"))
-            )
-            self.browser.execute_script("arguments[0].click();", post_button)
-            logging.info("Successfully submitted the comment!")
-            time.sleep(1.5)
+                # Locate and click the Post button to submit the comment
+                post_button = WebDriverWait(self.browser, 20).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[@class='comments-comment-box__submit-button mt3 artdeco-button artdeco-button--1 artdeco-button--primary ember-view']"))
+                )
+                self.browser.execute_script("arguments[0].click();", post_button)
+                logging.info("Successfully submitted the comment!")
+                time.sleep(1.5)
+            else:
+                logging.warning("No more comments left to post.")
         except Exception as e:
             logging.error(f"Error during commenting on the post: {e}")
             logging.error(traceback.format_exc())
