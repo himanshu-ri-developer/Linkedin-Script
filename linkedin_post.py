@@ -84,41 +84,50 @@ class LinkedinLogin:
 
             logging.info("Successfully navigated to Notifications tab!")
 
-            # Process notifications
-            for i in range(10):  # Process up to 10 notifications
+            # Process "New from" newsletter notifications
+            processed_count = 0
+            notification_index = 1
+            while processed_count < 10:
                 try:
-                    notification_xpath = f"(//a[contains(@class, 'nt-card__headline')])[{i+1}]"
+                    notification_xpath = f"(//a[contains(@class, 'nt-card__headline')])[{notification_index}]"
                     notification = WebDriverWait(self.browser, 20).until(
                         EC.presence_of_element_located((By.XPATH, notification_xpath))
                     )
-                    notification_url = notification.get_attribute("href")
-                    logging.info(f"Notification {i+1} URL: {notification_url}")
 
-                    # Open the URL in a new tab
-                    self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
-                    logging.info(f"Successfully opened notification {i+1} in a new tab!")
-                    time.sleep(1.5)
+                    if self.is_newsletter_notification(notification):
+                        notification_url = notification.get_attribute("href")
+                        logging.info(f"Newsletter notification {processed_count + 1} URL: {notification_url}")
 
-                    # Switch to the new tab
-                    self.browser.switch_to.window(self.browser.window_handles[1])
+                        # Open the URL in a new tab
+                        self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
+                        logging.info(f"Successfully opened newsletter notification {processed_count + 1} in a new tab!")
+                        time.sleep(1.5)
 
-                    # Like, comment, and repost
-                    self.like_post()
-                    self.comment_on_post()
-                    self.repost_comment()
+                        # Switch to the new tab
+                        self.browser.switch_to.window(self.browser.window_handles[1])
 
-                    # Close the current tab and switch back to the first tab
-                    self.browser.close()
-                    self.browser.switch_to.window(self.browser.window_handles[0])
-                    logging.info(f"Successfully processed notification {i+1} and switched back to the notifications tab!")
+                        # Perform the actions (like, comment, repost)
+                        self.like_post()
+                        self.comment_on_post()
+                        self.repost_comment()
+
+                        # Close the current tab and switch back to the first tab
+                        self.browser.close()
+                        self.browser.switch_to.window(self.browser.window_handles[0])
+                        logging.info(f"Successfully processed newsletter notification {processed_count + 1} and switched back to the notifications tab!")
+
+                        processed_count += 1
+
+                    notification_index += 1
 
                 except Exception as e:
-                    logging.error(f"Error processing notification {i+1}: {e}")
+                    logging.error(f"Error processing notification {notification_index}: {e}")
                     logging.error(traceback.format_exc())
                     # Close the tab and continue with the next notification
                     if len(self.browser.window_handles) > 1:
                         self.browser.close()
                         self.browser.switch_to.window(self.browser.window_handles[0])
+                    notification_index += 1
                     continue
 
         except Exception as e:
@@ -158,6 +167,15 @@ class LinkedinLogin:
             )
             return True
         except Exception:
+            return False
+
+    def is_newsletter_notification(self, notification):
+        try:
+            notification_text = notification.text
+            return notification_text.startswith("New from")
+        except Exception as e:
+            logging.error(f"Error checking if notification is a newsletter: {e}")
+            logging.error(traceback.format_exc())
             return False
 
     def like_post(self):
