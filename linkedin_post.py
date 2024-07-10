@@ -12,6 +12,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from openpyxl import Workbook, load_workbook
 
 class LinkedinLogin:
     def __init__(self, browser):
@@ -23,6 +24,8 @@ class LinkedinLogin:
         self.cookies_file = "linkedin_cookies.pkl"
         self.comments_file = "comments.txt"
         self.comments = self._load_comments()
+        self.historical_file = "historical_posts.xlsx"
+        self.processed_urls = self._load_processed_urls()
         logging.info(f'Username: {self.username}')
 
     def _load_comments(self):
@@ -34,6 +37,32 @@ class LinkedinLogin:
             logging.error(f"Error loading comments: {e}")
             logging.error(traceback.format_exc())
             return []
+
+    def _load_processed_urls(self):
+        try:
+            processed_urls = set()
+            if os.path.exists(self.historical_file):
+                wb = load_workbook(self.historical_file)
+                sheet = wb.active if wb.sheetnames else None
+                if sheet:
+                    for row in sheet.iter_rows(values_only=True):
+                        processed_urls.add(row[0])
+            return processed_urls
+        except Exception as e:
+            logging.error(f"Error loading processed URLs: {e}")
+            logging.error(traceback.format_exc())
+            return set()
+
+    def save_processed_url(self, url, comment):
+        try:
+            wb = load_workbook(self.historical_file) if os.path.exists(self.historical_file) else Workbook()
+            sheet = wb.active if wb.sheetnames else wb.create_sheet(title="Processed Notifications")
+            sheet.append([url, comment, time.strftime("%Y-%m-%d %H:%M:%S")])
+            wb.save(self.historical_file)
+            logging.info(f"Logged processed notification: {url}")
+        except Exception as e:
+            logging.error(f"Error logging processed notification: {e}")
+            logging.error(traceback.format_exc())
 
     def load_cookies(self):
         try:
@@ -84,41 +113,41 @@ class LinkedinLogin:
 
             logging.info("Successfully navigated to Notifications tab!")
 
-            # Process "New from" newsletter notifications
-            processed_count = 0
+            # Process all "New from" newsletter notifications
             notification_index = 1
-            while processed_count < 10:
+            while True:
                 try:
                     notification_xpath = f"(//a[contains(@class, 'nt-card__headline')])[{notification_index}]"
                     notification = WebDriverWait(self.browser, 20).until(
                         EC.presence_of_element_located((By.XPATH, notification_xpath))
                     )
 
-                    if self.is_newsletter_notification(notification):
-                        notification_url = notification.get_attribute("href")
-                        logging.info(f"Newsletter notification {processed_count + 1} URL: {notification_url}")
+                    notification_url = notification.get_attribute("href")
+                    if self.is_newsletter_notification(notification) and notification_url not in self.processed_urls:
+                        logging.info(f"Newsletter notification URL: {notification_url}")
 
                         # Open the URL in a new tab
                         self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
-                        logging.info(f"Successfully opened newsletter notification {processed_count + 1} in a new tab!")
+                        logging.info(f"Successfully opened newsletter notification {notification_index} in a new tab!")
                         time.sleep(1.5)
 
                         # Switch to the new tab
                         self.browser.switch_to.window(self.browser.window_handles[1])
 
-                        # Perform the actions (like, comment, repost)
+                        # Perform the actions (like, comment, close tab)
                         self.like_post()
-                        self.comment_on_post()
-                        self.repost_comment()
+                        self.comment_on_post(notification_url)
 
                         # Close the current tab and switch back to the first tab
                         self.browser.close()
                         self.browser.switch_to.window(self.browser.window_handles[0])
-                        logging.info(f"Successfully processed newsletter notification {processed_count + 1} and switched back to the notifications tab!")
-
-                        processed_count += 1
+                        logging.info(f"Successfully processed newsletter notification {notification_index} and switched back to the notifications tab!")
 
                     notification_index += 1
+
+                    # Scroll down to load more notifications if necessary
+                    if notification_index % 5 == 0:
+                        self.scroll_to_bottom()
 
                 except Exception as e:
                     logging.error(f"Error processing notification {notification_index}: {e}")
@@ -190,9 +219,8 @@ class LinkedinLogin:
         except Exception as e:
             logging.error(f"Error during liking the post: {e}")
             logging.error(traceback.format_exc())
-            raise e
 
-    def comment_on_post(self):
+    def comment_on_post(self, notification_url):
         try:
             # Locate the comment button and click it to open the comment input
             comment_button = WebDriverWait(self.browser, 20).until(
@@ -218,43 +246,43 @@ class LinkedinLogin:
                 self.browser.execute_script("arguments[0].click();", post_button)
                 logging.info("Successfully submitted the comment!")
                 time.sleep(1.5)
+                self.save_processed_url(notification_url, comment)
             else:
                 logging.warning("No more comments left to post.")
         except Exception as e:
             logging.error(f"Error during commenting on the post: {e}")
             logging.error(traceback.format_exc())
-            raise e
 
-    def repost_comment(self):
+    def scroll_to_bottom(self):
         try:
-            # Locate and click the Repost button
-            repost_button = WebDriverWait(self.browser, 20).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Repost']"))
-            )
-            self.browser.execute_script("arguments[0].click();", repost_button)
-            logging.info("Successfully reposted the comment!")
-            time.sleep(1.5)
+            # Scroll to the bottom of the page to load more notifications
+            self.browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            logging.info("Scrolled to the bottom of the page.")
         except Exception as e:
-            logging.error(f"Error during reposting the comment: {e}")
+            logging.error(f"Error while scrolling to the bottom: {e}")
             logging.error(traceback.format_exc())
-            raise e
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-    # Initialize the Chrome driver
-    service = Service(ChromeDriverManager().install())
-    options = webdriver.ChromeOptions()
-    driver = webdriver.Chrome(service=service, options=options)
+    # Configure Chrome options
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-notifications")
 
+    # Set up Chrome driver
     try:
-        linkedin_login = LinkedinLogin(driver)
+        driver_path = ChromeDriverManager().install()
+        browser = webdriver.Chrome(service=Service(driver_path), options=chrome_options)
+
+        # Initialize LinkedIn login and interaction
+        linkedin_login = LinkedinLogin(browser)
         linkedin_login.login_and_open_notifications()
 
-        # Wait for 1 minute on the LinkedIn notifications page
-        logging.info("Waiting for 1 minute on the LinkedIn notifications page...")
-        time.sleep(60)
-        logging.info("Finished waiting. Exiting...")
+    except Exception as e:
+        logging.error(f"Main script error: {e}")
+        logging.error(traceback.format_exc())
     finally:
-        # Close the browser
-        driver.quit()
+        if browser:
+            browser.quit()
