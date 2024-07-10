@@ -16,6 +16,7 @@ from openpyxl import Workbook, load_workbook
 
 class LinkedinLogin:
     def __init__(self, browser):
+        # Load environment variables
         env_file = os.path.join(Path(__file__).parent, ".env")
         load_dotenv(env_file)
         self.browser = browser
@@ -26,9 +27,11 @@ class LinkedinLogin:
         self.comments = self._load_comments()
         self.historical_file = "historical_posts.xlsx"
         self.processed_urls = self._load_processed_urls()
+        self.new_credentials = os.getenv("NEW_CREDENTIALS", "false").lower() == "true"
         logging.info(f'Username: {self.username}')
 
     def _load_comments(self):
+        # Load comments from the comments.txt file
         try:
             with open(self.comments_file, "r") as file:
                 comments = file.readlines()
@@ -39,6 +42,7 @@ class LinkedinLogin:
             return []
 
     def _load_processed_urls(self):
+        # Load processed URLs from the historical_posts.xlsx file
         try:
             processed_urls = set()
             if os.path.exists(self.historical_file):
@@ -54,9 +58,14 @@ class LinkedinLogin:
             return set()
 
     def save_processed_url(self, url, comment):
+        # Save the processed URL and comment to the historical_posts.xlsx file
         try:
             wb = load_workbook(self.historical_file) if os.path.exists(self.historical_file) else Workbook()
-            sheet = wb.active if wb.sheetnames else wb.create_sheet(title="Processed Notifications")
+            if not wb.sheetnames:
+                sheet = wb.create_sheet(title="Processed Notifications")
+                sheet.append(["Notification URL", "Comment", "Timestamp"])
+            else:
+                sheet = wb.active
             sheet.append([url, comment, time.strftime("%Y-%m-%d %H:%M:%S")])
             wb.save(self.historical_file)
             logging.info(f"Logged processed notification: {url}")
@@ -65,8 +74,9 @@ class LinkedinLogin:
             logging.error(traceback.format_exc())
 
     def load_cookies(self):
+        # Load cookies from the cookies.pkl file
         try:
-            if os.path.exists(self.cookies_file):
+            if os.path.exists(self.cookies_file) and not self.new_credentials:
                 with open(self.cookies_file, "rb") as file:
                     cookies = pickle.load(file)
                     for cookie in cookies:
@@ -80,6 +90,7 @@ class LinkedinLogin:
             return False
 
     def save_cookies(self):
+        # Save cookies to the cookies.pkl file
         try:
             with open(self.cookies_file, "wb") as file:
                 pickle.dump(self.browser.get_cookies(), file)
@@ -89,9 +100,10 @@ class LinkedinLogin:
             logging.error(traceback.format_exc())
 
     def login_and_open_notifications(self):
+        # Log in to LinkedIn and open the notifications tab
         try:
             self.browser.get("https://www.linkedin.com")
-            if not self.load_cookies():
+            if not self.load_cookies() or self.new_credentials:
                 self.browser.get("https://www.linkedin.com/login")
                 self._perform_login()
                 self.save_cookies()
@@ -159,12 +171,18 @@ class LinkedinLogin:
                     notification_index += 1
                     continue
 
+                # Break the loop if no new notifications to process
+                if notification_index > len(self.browser.find_elements(By.XPATH, "//a[contains(@class, 'nt-card__headline')]")):
+                    logging.info("No new notifications remaining to open.")
+                    break
+
         except Exception as e:
             logging.error(f"Error during login and navigation: {e}")
             logging.error(traceback.format_exc())
             raise e
 
     def _perform_login(self):
+        # Perform login using username and password
         try:
             self.browser.implicitly_wait(10)
             time.sleep(2)
@@ -189,6 +207,7 @@ class LinkedinLogin:
             raise e
 
     def _is_logged_in(self):
+        # Check if the user is logged in
         try:
             self.browser.get("https://www.linkedin.com/feed/")
             WebDriverWait(self.browser, 10).until(
@@ -199,6 +218,7 @@ class LinkedinLogin:
             return False
 
     def is_newsletter_notification(self, notification):
+        # Check if the notification is a newsletter
         try:
             notification_text = notification.text
             return notification_text.startswith("New from")
@@ -208,8 +228,8 @@ class LinkedinLogin:
             return False
 
     def like_post(self):
+        # Like the post
         try:
-            # Locate and click the Like button
             like_button = WebDriverWait(self.browser, 20).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'React Like')]"))
             )
@@ -221,8 +241,8 @@ class LinkedinLogin:
             logging.error(traceback.format_exc())
 
     def comment_on_post(self, notification_url):
+        # Comment on the post
         try:
-            # Locate the comment button and click it to open the comment input
             comment_button = WebDriverWait(self.browser, 20).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'Comment')]"))
             )
@@ -230,16 +250,14 @@ class LinkedinLogin:
             logging.info("Successfully opened the comment input!")
             time.sleep(1.5)
 
-            # Locate the comment input field and enter the comment
             comment_input = WebDriverWait(self.browser, 20).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='textbox']"))
             )
             if self.comments:
-                comment = self.comments.pop(0)  # Get the first comment from the list
+                comment = self.comments.pop(0)
                 comment_input.send_keys(comment)
                 logging.info(f"Successfully entered the comment: {comment}")
 
-                # Locate and click the Post button to submit the comment
                 post_button = WebDriverWait(self.browser, 20).until(
                     EC.element_to_be_clickable((By.XPATH, "//button[@class='comments-comment-box__submit-button mt3 artdeco-button artdeco-button--1 artdeco-button--primary ember-view']"))
                 )
@@ -254,8 +272,8 @@ class LinkedinLogin:
             logging.error(traceback.format_exc())
 
     def scroll_to_bottom(self):
+        # Scroll to the bottom of the page to load more notifications
         try:
-            # Scroll to the bottom of the page to load more notifications
             self.browser.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
             logging.info("Scrolled to the bottom of the page.")
