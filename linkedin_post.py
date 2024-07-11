@@ -13,6 +13,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from openpyxl import Workbook, load_workbook
+from datetime import datetime, timedelta
 
 class LinkedinLogin:
     def __init__(self, browser):
@@ -26,9 +27,10 @@ class LinkedinLogin:
         self.comments_file = "comments.txt"
         self.comments = self._load_comments()
         self.historical_file = "historical_posts.xlsx"
-        self.processed_urls = self._load_processed_urls()
+        self.processed_urls, self.used_comments = self._load_processed_urls_and_comments()
         self.new_credentials = os.getenv("NEW_CREDENTIALS", "false").lower() == "true"
         logging.info(f'Username: {self.username}')
+        self.last_break_time = datetime.now()
 
     def _load_comments(self):
         # Load comments from the comments.txt file
@@ -41,21 +43,23 @@ class LinkedinLogin:
             logging.error(traceback.format_exc())
             return []
 
-    def _load_processed_urls(self):
-        # Load processed URLs from the historical_posts.xlsx file
+    def _load_processed_urls_and_comments(self):
+        # Load processed URLs and used comments from the historical_posts.xlsx file
         try:
             processed_urls = set()
+            used_comments = set()
             if os.path.exists(self.historical_file):
                 wb = load_workbook(self.historical_file)
                 sheet = wb.active if wb.sheetnames else None
                 if sheet:
                     for row in sheet.iter_rows(values_only=True):
                         processed_urls.add(row[0])
-            return processed_urls
+                        used_comments.add(row[1])
+            return processed_urls, used_comments
         except Exception as e:
-            logging.error(f"Error loading processed URLs: {e}")
+            logging.error(f"Error loading processed URLs and comments: {e}")
             logging.error(traceback.format_exc())
-            return set()
+            return set(), set()
 
     def save_processed_url(self, url, comment):
         # Save the processed URL and comment to the historical_posts.xlsx file
@@ -99,6 +103,15 @@ class LinkedinLogin:
             logging.error(f"Error saving cookies: {e}")
             logging.error(traceback.format_exc())
 
+    def check_break_time(self):
+        # Check if the script needs to take a break
+        current_time = datetime.now()
+        elapsed_time = current_time - self.last_break_time
+        if elapsed_time > timedelta(hours=1):
+            logging.info("Taking a 10-minute break...")
+            time.sleep(600)  # 10-minute break
+            self.last_break_time = datetime.now()
+
     def login_and_open_notifications(self):
         # Log in to LinkedIn and open the notifications tab
         try:
@@ -109,7 +122,7 @@ class LinkedinLogin:
                 self.save_cookies()
             else:
                 self.browser.get("https://www.linkedin.com")
-                time.sleep(5)
+                time.sleep(2)
                 self.browser.refresh()
                 if not self._is_logged_in():
                     self.browser.get("https://www.linkedin.com/login")
@@ -121,13 +134,14 @@ class LinkedinLogin:
                 EC.element_to_be_clickable((By.XPATH, "//span[text()='Notifications']"))
             )
             self.browser.execute_script("arguments[0].click();", notifications_tab)
-            time.sleep(1.5)
+            time.sleep(2)
 
             logging.info("Successfully navigated to Notifications tab!")
 
             # Process all "New from" newsletter notifications
             notification_index = 1
             while True:
+                self.check_break_time()  # Check if it's time to take a break
                 try:
                     notification_xpath = f"(//a[contains(@class, 'nt-card__headline')])[{notification_index}]"
                     notification = WebDriverWait(self.browser, 20).until(
@@ -141,7 +155,7 @@ class LinkedinLogin:
                         # Open the URL in a new tab
                         self.browser.execute_script("window.open(arguments[0], '_blank');", notification_url)
                         logging.info(f"Successfully opened newsletter notification {notification_index} in a new tab!")
-                        time.sleep(1.5)
+                        time.sleep(5)
 
                         # Switch to the new tab
                         self.browser.switch_to.window(self.browser.window_handles[1])
@@ -150,10 +164,16 @@ class LinkedinLogin:
                         self.like_post()
                         self.comment_on_post(notification_url)
 
+                        # Wait for 5 seconds before closing the current tab
+                        time.sleep(5)
+
                         # Close the current tab and switch back to the first tab
                         self.browser.close()
                         self.browser.switch_to.window(self.browser.window_handles[0])
                         logging.info(f"Successfully processed newsletter notification {notification_index} and switched back to the notifications tab!")
+
+                    # Wait for 2 seconds before processing the next notification
+                    time.sleep(2)
 
                     notification_index += 1
 
@@ -192,7 +212,7 @@ class LinkedinLogin:
 
             password_field = self.browser.find_element(By.ID, "password")
             password_field.send_keys(self.password)
-            time.sleep(3)
+            time.sleep(2)
             password_field.send_keys(Keys.RETURN)
 
             # Wait for 2FA input (manually enter OTP if needed)
@@ -201,6 +221,7 @@ class LinkedinLogin:
                 EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Search']"))
             )
             logging.info("Login completed successfully.")
+            time.sleep(2)
         except Exception as e:
             logging.error(f"Error during login: {e}")
             logging.error(traceback.format_exc())
@@ -235,7 +256,7 @@ class LinkedinLogin:
             )
             self.browser.execute_script("arguments[0].click();", like_button)
             logging.info("Successfully liked the post!")
-            time.sleep(1.5)
+            time.sleep(5)
         except Exception as e:
             logging.error(f"Error during liking the post: {e}")
             logging.error(traceback.format_exc())
@@ -248,13 +269,18 @@ class LinkedinLogin:
             )
             self.browser.execute_script("arguments[0].click();", comment_button)
             logging.info("Successfully opened the comment input!")
-            time.sleep(1.5)
+            time.sleep(5)
 
             comment_input = WebDriverWait(self.browser, 20).until(
                 EC.presence_of_element_located((By.XPATH, "//div[@role='textbox']"))
             )
             if self.comments:
                 comment = self.comments.pop(0)
+                while comment in self.used_comments:
+                    if not self.comments:
+                        logging.warning("No more unique comments left to post.")
+                        return
+                    comment = self.comments.pop(0)
                 comment_input.send_keys(comment)
                 logging.info(f"Successfully entered the comment: {comment}")
 
@@ -263,8 +289,9 @@ class LinkedinLogin:
                 )
                 self.browser.execute_script("arguments[0].click();", post_button)
                 logging.info("Successfully submitted the comment!")
-                time.sleep(1.5)
+                time.sleep(5)
                 self.save_processed_url(notification_url, comment)
+                self.used_comments.add(comment)
             else:
                 logging.warning("No more comments left to post.")
         except Exception as e:
