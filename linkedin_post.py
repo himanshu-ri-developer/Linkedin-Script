@@ -160,9 +160,10 @@ class LinkedinLogin:
                         # Switch to the new tab
                         self.browser.switch_to.window(self.browser.window_handles[1])
 
-                        # Perform the actions (like, comment, close tab)
+                        # Perform the actions (like, comment, share, close tab)
                         self.like_post()
                         self.comment_on_post(notification_url)
+                        self.share_post()
 
                         # Wait for 5 seconds before closing the current tab
                         time.sleep(5)
@@ -298,6 +299,47 @@ class LinkedinLogin:
             logging.error(f"Error during commenting on the post: {e}")
             logging.error(traceback.format_exc())
 
+    def share_post(self):
+        # Share the post
+        try:
+            # Click the Share button
+            share_button = WebDriverWait(self.browser, 20).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(@aria-label, 'Share')]"))
+            )
+            self.browser.execute_script("arguments[0].click();", share_button)
+            logging.info("Successfully clicked the Share button!")
+            time.sleep(1.5)
+
+            # Find the repost element
+            repost_element = WebDriverWait(self.browser, 20).until(
+                EC.presence_of_element_located((By.XPATH, "(//div[@tabindex='-1'])[3]"))
+            )
+
+            # Use Actions to click the element and navigate the dropdown
+            actions = webdriver.ActionChains(self.browser)
+            actions.move_to_element(repost_element).click().perform()
+            time.sleep(2)
+            actions.send_keys(Keys.ARROW_DOWN).perform()
+            time.sleep(2)
+            actions.send_keys(Keys.ENTER).perform()
+            logging.info("Successfully clicked the Repost to Feed option using Actions!")
+
+            time.sleep(2)  # Adding delay to ensure the action completes
+
+            # Click the Post button
+            post_button = WebDriverWait(self.browser, 20).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'share-actions__primary-action')]"))
+            )
+            self.browser.execute_script("arguments[0].click();", post_button)
+            logging.info("Successfully clicked the Post button!")
+
+            time.sleep(2)  # Adding delay to ensure the action completes
+        except Exception as e:
+            logging.error(f"Error during sharing the post: {e}")
+            self.capture_screenshot("repost_error")
+            logging.error(traceback.format_exc())
+            raise e
+
     def scroll_to_bottom(self):
         # Scroll to the bottom of the page to load more notifications
         try:
@@ -306,6 +348,17 @@ class LinkedinLogin:
             logging.info("Scrolled to the bottom of the page.")
         except Exception as e:
             logging.error(f"Error while scrolling to the bottom: {e}")
+            logging.error(traceback.format_exc())
+
+    def capture_screenshot(self, name):
+        # Capture a screenshot and save it with the given name
+        try:
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            screenshot_name = f"{name}_{timestamp}.png"
+            self.browser.save_screenshot(screenshot_name)
+            logging.info(f"Screenshot saved as {screenshot_name}")
+        except Exception as e:
+            logging.error(f"Error capturing screenshot: {e}")
             logging.error(traceback.format_exc())
 
 if __name__ == "__main__":
